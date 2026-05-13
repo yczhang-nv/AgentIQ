@@ -14,7 +14,6 @@
 # limitations under the License.
 
 import datetime
-import logging
 from collections.abc import AsyncIterator
 from zoneinfo import ZoneInfo
 
@@ -24,7 +23,29 @@ from nat.builder.function_info import FunctionInfo
 from nat.cli.register_workflow import register_function
 from nat.data_models.function import FunctionBaseConfig
 
-logger = logging.getLogger(__name__)
+CITY_TIMEZONES = {
+    "london": ("London", "Europe/London"),
+    "new york": ("New York", "America/New_York"),
+    "tokyo": ("Tokyo", "Asia/Tokyo"),
+}
+
+CITY_ALIASES = {
+    "london, england": "london",
+    "london, uk": "london",
+    "london, united kingdom": "london",
+    "new york city": "new york",
+    "new york, ny": "new york",
+    "new york, usa": "new york",
+    "new york, united states": "new york",
+    "nyc": "new york",
+    "tokyo, japan": "tokyo",
+}
+
+
+def _normalize_city(city: str) -> str:
+    """Normalize city names and common qualified variants."""
+    normalized_city = " ".join(city.strip().casefold().split())
+    return CITY_ALIASES.get(normalized_city, normalized_city)
 
 
 class TimeMCPToolConfig(FunctionBaseConfig, name="get_city_time_tool"):
@@ -52,10 +73,13 @@ async def get_city_time(_config: TimeMCPToolConfig, _builder: Builder) -> AsyncI
             str: The current time in the specified city or an error message if the city is not recognized.
         """
 
-        if city.strip().casefold() not in {"new york", "new york city", "nyc"}:
+        city_timezone = CITY_TIMEZONES.get(_normalize_city(city))
+        if city_timezone is None:
             return f"Sorry, I don't have timezone information for {city}."
 
-        now = datetime.datetime.now(ZoneInfo("America/New_York"))
-        return f"The current time in {city} is {now.strftime('%Y-%m-%d %H:%M:%S %Z%z')}"
+        canonical_city, timezone_name = city_timezone
+        now = datetime.datetime.now(ZoneInfo(timezone_name))
+        local_time = now.strftime("%Y-%m-%d %H:%M:%S %Z%z")
+        return f"The current time in {canonical_city} is {local_time}"
 
     yield FunctionInfo.from_fn(_get_city_time, description=_get_city_time.__doc__)
