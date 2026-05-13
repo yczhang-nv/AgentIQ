@@ -35,10 +35,10 @@ BUILDER = cast(Builder, None)
     ],
 )
 async def test_weather_update_supports_demo_cities(city: str, expected_city: str):
-    tool_info = await anext(weather_update(WeatherToolConfig(), BUILDER))
-    assert tool_info.single_fn is not None
+    async with weather_update(WeatherToolConfig(), BUILDER) as tool_info:
+        assert tool_info.single_fn is not None
 
-    result = await tool_info.single_fn(city)
+        result = await tool_info.single_fn(city)
 
     assert expected_city in result
     assert "not available" not in result
@@ -55,10 +55,10 @@ async def test_weather_update_supports_demo_cities(city: str, expected_city: str
 async def test_get_city_time_supports_demo_cities(city: str,
                                                  expected_city: str,
                                                  expected_timezone: tuple[str, ...]):
-    tool_info = await anext(get_city_time(TimeMCPToolConfig(), BUILDER))
-    assert tool_info.single_fn is not None
+    async with get_city_time(TimeMCPToolConfig(), BUILDER) as tool_info:
+        assert tool_info.single_fn is not None
 
-    result = await tool_info.single_fn(city)
+        result = await tool_info.single_fn(city)
 
     assert f"The current time in {expected_city}" in result
     assert any(timezone in result for timezone in expected_timezone)
