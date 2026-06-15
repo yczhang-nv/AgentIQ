@@ -38,6 +38,7 @@ from nat.plugins.langchain.agent.base import AGENT_CALL_LOG_MESSAGE
 from nat.plugins.langchain.agent.base import AGENT_LOG_PREFIX
 from nat.plugins.langchain.agent.base import AgentDecision
 from nat.plugins.langchain.agent.base import _chunk_to_message
+from nat.plugins.langchain.agent.base import _extract_message_text
 from nat.plugins.langchain.agent.base import _format_agent_thoughts_for_log
 from nat.plugins.langchain.agent.dual_node import DualNodeAgent
 
@@ -200,7 +201,7 @@ class ToolCallAgentGraph(DualNodeAgent):
                 response = await self._retry_on_truncation(response, state)
             else:
                 usage: UsageMetadata = self._get_token_usage(response)
-                truncated_content: str = str(response.content)[:500] if response.content else "<empty>"
+                truncated_content: str = _extract_message_text(response)[:500] or "<empty>"
                 model_name: str = metadata.get("model_name", "unknown")
                 msg: str = (f"LLM output truncated (finish_reason='length'). "
                             f"model={model_name}, "
@@ -212,7 +213,7 @@ class ToolCallAgentGraph(DualNodeAgent):
 
         # Empty response — no content, no tool calls at all
         if (not response.tool_calls and not getattr(response, "invalid_tool_calls", None)
-                and not (response.content and str(response.content).strip())):
+                and not _extract_message_text(response).strip()):
             if self._max_empty_response_retries > 0:
                 response = await self._retry_on_empty_response(state, metadata)
             else:
@@ -329,7 +330,7 @@ class ToolCallAgentGraph(DualNodeAgent):
             )
             response = await self._invoke_llm(state)
 
-            has_content: bool = bool(response.content and str(response.content).strip())
+            has_content: bool = bool(_extract_message_text(response).strip())
             if response.tool_calls or has_content:
                 logger.info(
                     "%s Empty response retry succeeded on attempt %d",

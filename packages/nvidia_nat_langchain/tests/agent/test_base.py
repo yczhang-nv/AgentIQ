@@ -27,6 +27,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
 from nat.plugins.langchain.agent.base import BaseAgent
+from nat.plugins.langchain.agent.base import _extract_message_text
 from nat.plugins.langchain.agent.base import _format_agent_thoughts_for_log
 
 
@@ -198,6 +199,44 @@ def test_format_agent_thoughts_for_log_uses_reasoning_when_content_empty():
     assert _format_agent_thoughts_for_log(message) == "thinking through the tool choice"
 
 
+def test_extract_message_text_returns_string_content():
+    """String message content should pass through unchanged."""
+    message = AIMessage(content="plain text")
+
+    assert _extract_message_text(message) == "plain text"
+
+
+def test_extract_message_text_reads_provider_text_blocks():
+    """Provider content blocks should collapse to their text fields."""
+    message = AIMessage(content=[
+        {
+            "type": "text", "text": "Hello"
+        },
+        " ",
+        {
+            "type": "text", "text": "world"
+        },
+    ])
+
+    assert _extract_message_text(message) == "Hello world"
+
+
+def test_extract_message_text_ignores_non_text_blocks():
+    """Non-text provider blocks should not leak their Python repr into user responses."""
+    message = AIMessage(content=[
+        {
+            "type": "tool_use", "id": "toolu_123", "name": "lookup", "input": {
+                "query": "NVIDIA"
+            }
+        },
+        {
+            "type": "text", "text": "done"
+        },
+    ])
+
+    assert _extract_message_text(message) == "done"
+
+
 class TestCallLLM:
     """Test the _call_llm method."""
 
@@ -237,6 +276,18 @@ class TestCallLLM:
 
         assert isinstance(result, AIMessage)
         assert result.content == "123"
+
+    async def test_llm_call_extracts_list_content_text(self, base_agent):
+        """Test that LLM response content blocks are converted to text."""
+        inputs = {"messages": [HumanMessage(content="test")]}
+        mock_response = AIMessage(content=[{"type": "text", "text": "block answer"}])
+
+        base_agent.llm.ainvoke = AsyncMock(return_value=mock_response)
+
+        result = await base_agent._call_llm(base_agent.llm, inputs)
+
+        assert isinstance(result, AIMessage)
+        assert result.content == "block answer"
 
 
 class TestCallTool:

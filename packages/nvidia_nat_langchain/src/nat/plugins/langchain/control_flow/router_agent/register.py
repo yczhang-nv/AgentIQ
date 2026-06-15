@@ -47,6 +47,7 @@ async def router_agent_workflow(config: RouterAgentWorkflowConfig, builder: Buil
     from langgraph.graph.state import CompiledStateGraph
 
     from nat.plugins.langchain.agent.base import AGENT_LOG_PREFIX
+    from nat.plugins.langchain.agent.base import _extract_message_text
     from nat.plugins.langchain.control_flow.router_agent.agent import RouterAgentGraph
     from nat.plugins.langchain.control_flow.router_agent.agent import RouterAgentGraphState
     from nat.plugins.langchain.control_flow.router_agent.agent import create_router_agent_prompt
@@ -75,7 +76,7 @@ async def router_agent_workflow(config: RouterAgentWorkflowConfig, builder: Buil
             result_state = RouterAgentGraphState(**result_dict)
 
             output_message = result_state.messages[-1]
-            return str(output_message.content)
+            return _extract_message_text(output_message)
 
         except Exception as ex:
             logger.exception("%s Router Agent failed with exception: %s", AGENT_LOG_PREFIX, ex)

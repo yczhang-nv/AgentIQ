@@ -76,6 +76,7 @@ async def rewoo_agent_workflow(config: ReWOOAgentWorkflowConfig, builder: Builde
     from langchain_core.prompts import ChatPromptTemplate
     from langgraph.graph.state import CompiledStateGraph
 
+    from nat.plugins.langchain.agent.base import _extract_message_text
     from nat.plugins.langchain.agent.rewoo_agent.prompt import PLANNER_SYSTEM_PROMPT
     from nat.plugins.langchain.agent.rewoo_agent.prompt import PLANNER_USER_PROMPT
     from nat.plugins.langchain.agent.rewoo_agent.prompt import SOLVER_SYSTEM_PROMPT
@@ -154,10 +155,7 @@ async def rewoo_agent_workflow(config: ReWOOAgentWorkflowConfig, builder: Builde
 
             # get and return the output from the state
             state = ReWOOGraphState(**state)
-            output_message = state.result.content
-            # Ensure output_message is a string
-            if isinstance(output_message, list | dict):
-                output_message = str(output_message)
+            output_message = _extract_message_text(state.result)
 
             # Create usage statistics for the response
             prompt_tokens = sum(len(str(msg.content).split()) for msg in message.messages)

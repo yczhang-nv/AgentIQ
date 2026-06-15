@@ -45,10 +45,29 @@ def _extract_reasoning_content(message: BaseMessage) -> str:
     return reasoning if isinstance(reasoning, str) else str(reasoning)
 
 
+def _extract_message_text(message: BaseMessage) -> str:
+    """Extract text from LangChain message content across provider formats."""
+    content = message.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                text_parts.append(block)
+            elif isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str):
+                    text_parts.append(text)
+                elif text is not None:
+                    text_parts.append(str(text))
+        return "".join(text_parts)
+    return str(content)
+
+
 def _format_agent_thoughts_for_log(message: BaseMessage) -> str:
     """Return concise text for detailed agent thought logs."""
-    content = message.content
-    content_text = content if isinstance(content, str) else str(content)
+    content_text = _extract_message_text(message)
     if content_text.strip():
         return content_text
     return _extract_reasoning_content(message)
@@ -190,7 +209,7 @@ class BaseAgent(ABC):
             The LLM response
         """
         response = await llm.ainvoke(inputs, config=self._runnable_config)
-        return AIMessage(content=str(response.content))
+        return AIMessage(content=_extract_message_text(response))
 
     async def _call_tool(self, tool: BaseTool, tool_input: dict[str, Any] | str, max_retries: int = 3) -> ToolMessage:
         """

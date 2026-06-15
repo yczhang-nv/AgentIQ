@@ -21,6 +21,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.messages.tool import ToolMessage
 from langgraph.graph.state import CompiledStateGraph
 
+from nat.data_models.api_server import ChatRequestOrMessage
 from nat.plugins.langchain.agent.base import AgentDecision
 from nat.plugins.langchain.agent.react_agent.agent import NO_INPUT_ERROR_MESSAGE
 from nat.plugins.langchain.agent.react_agent.agent import TOOL_NOT_FOUND_ERROR_MESSAGE
@@ -209,6 +210,24 @@ async def test_agent_node_parse_agent_finish_with_thoughts(mock_react_agent):
     final_answer = final_answer.messages[-1]
     assert isinstance(final_answer, AIMessage)
     assert final_answer.content == answer
+
+
+async def test_agent_node_parse_agent_finish_from_list_style_content(mock_react_agent):
+    """ReAct parsing should consume provider text blocks instead of a Python list repr."""
+    from unittest.mock import AsyncMock
+    from unittest.mock import patch
+
+    mock_response = AIMessage(content=[{"type": "text", "text": "Thought: done\nFinal Answer: block answer"}])
+    mock_state = ReActGraphState(messages=[HumanMessage(content="What is the answer?")])
+
+    with patch.object(mock_react_agent, '_stream_llm', new_callable=AsyncMock) as mock_stream_llm:
+        mock_stream_llm.return_value = mock_response
+
+        final_answer = await mock_react_agent.agent_node(mock_state)
+
+    final_answer = final_answer.messages[-1]
+    assert isinstance(final_answer, AIMessage)
+    assert final_answer.content == "block answer"
 
 
 async def test_agent_node_parse_agent_finish_with_markdown_and_code(mock_react_agent):
@@ -1476,6 +1495,35 @@ async def test_agent_node_native_tool_calling_uses_reasoning_for_tool_log(mock_c
 # =============================================================================
 
 
+@pytest.fixture(name='react_function_info_factory')
+def fixture_react_function_info_factory(mock_llm, mock_tool):
+    """Factory fixture that builds ReAct FunctionInfo with a mocked LangGraph graph."""
+
+    async def _make(*, ainvoke_result=None, astream=None, config=None):
+        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
+        from unittest.mock import patch
+
+        from nat.plugins.langchain.agent.react_agent.register import react_agent_workflow
+
+        if config is None:
+            config = ReActAgentWorkflowConfig(tool_names=['test'], llm_name='test')
+
+        mock_builder = AsyncMock()
+        mock_builder.get_llm = AsyncMock(return_value=mock_llm)
+        mock_builder.get_tools = AsyncMock(return_value=[mock_tool('Tool A')])
+
+        mock_graph = MagicMock()
+        mock_graph.ainvoke = AsyncMock(return_value=ainvoke_result or {"messages": []})
+        mock_graph.astream = astream
+
+        with patch.object(ReActAgentGraph, 'build_graph', new=AsyncMock(return_value=mock_graph)):
+            async with react_agent_workflow(config, mock_builder) as function_info:
+                return function_info
+
+    return _make
+
+
 @pytest.fixture(name='stream_fn_factory')
 def fixture_stream_fn_factory(mock_llm, mock_tool):
     """Factory fixture that builds a _stream_fn closure for a given mock astream function."""
@@ -1502,6 +1550,18 @@ def fixture_stream_fn_factory(mock_llm, mock_tool):
                 return function_info.stream_fn
 
     return _make
+
+
+async def test_response_fn_extracts_list_style_message_content(react_function_info_factory):
+    """Single-shot ReAct responses should return text from provider content blocks."""
+    function_info = await react_function_info_factory(
+        ainvoke_result={"messages": [AIMessage(content=[{
+            "type": "text", "text": "The result is 42."
+        }])]})
+
+    response = await function_info.single_fn(ChatRequestOrMessage(input_message="What is 6*7?"))
+
+    assert response == "The result is 42."
 
 
 async def test_agent_node_passes_config_to_stream_llm(mock_config_react_agent, mock_llm, mock_tool):
@@ -1570,6 +1630,28 @@ async def test_stream_fn_yields_content_after_final_answer_marker(stream_fn_fact
 
     combined = "".join(c.choices[0].delta.content for c in chunks if c.choices and c.choices[0].delta.content)
     assert "The result is 42" in combined
+
+
+async def test_stream_fn_yields_list_style_content_after_final_answer_marker(stream_fn_factory):
+    """_stream_fn should buffer provider text blocks the same as string chunks."""
+    from langchain_core.messages import AIMessageChunk
+
+    from nat.data_models.api_server import ChatRequest
+
+    async def mock_astream(state, config=None, stream_mode=None):
+        yield (AIMessageChunk(content=[{
+            "type": "text", "text": "Thought: I know\nFinal Answer: Block answer"
+        }]), {
+            "langgraph_node": "agent"
+        })
+
+    stream_fn = await stream_fn_factory(mock_astream)
+
+    request = ChatRequest.from_string("What is 6*7?")
+    chunks = [chunk async for chunk in stream_fn(request)]
+
+    combined = "".join(c.choices[0].delta.content for c in chunks if c.choices and c.choices[0].delta.content)
+    assert combined.strip() == "Block answer"
 
 
 async def test_stream_fn_handles_split_final_answer(stream_fn_factory):

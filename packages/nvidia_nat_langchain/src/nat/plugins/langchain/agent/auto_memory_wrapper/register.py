@@ -129,6 +129,7 @@ async def auto_memory_agent(config: AutoMemoryAgentConfig, builder: Builder) -> 
     from nat.plugins.langchain.agent.auto_memory_wrapper.agent import AutoMemoryWrapperGraph
     from nat.plugins.langchain.agent.auto_memory_wrapper.state import AutoMemoryWrapperState
     from nat.plugins.langchain.agent.base import AGENT_LOG_PREFIX
+    from nat.plugins.langchain.agent.base import _extract_message_text
 
     # Get memory editor from builder
     memory_editor = await builder.get_memory_client(config.memory_name)
@@ -210,7 +211,7 @@ async def auto_memory_agent(config: AutoMemoryAgentConfig, builder: Builder) -> 
             result_state = AutoMemoryWrapperState(**result_dict)
 
             output_message = result_state.messages[-1]
-            return str(output_message.content)
+            return _extract_message_text(output_message)
 
         except Exception as ex:
             logger.exception(f"{AGENT_LOG_PREFIX} Auto-memory agent failed with exception")

@@ -22,11 +22,14 @@ from unittest.mock import patch
 
 import pytest
 from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessageChunk
 from langchain_core.messages import HumanMessage
 from langchain_core.messages import ToolMessage
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 
+from nat.data_models.api_server import ChatRequest
+from nat.data_models.api_server import ChatRequestOrMessage
 from nat.data_models.api_server import ChatResponseChunk
 from nat.data_models.api_server import ChatResponseChunkChoice
 from nat.data_models.api_server import ChoiceDelta
@@ -38,6 +41,7 @@ from nat.plugins.langchain.agent.tool_calling_agent.agent import ToolCallAgentGr
 from nat.plugins.langchain.agent.tool_calling_agent.agent import create_tool_calling_agent_prompt
 from nat.plugins.langchain.agent.tool_calling_agent.register import ToolCallAgentWorkflowConfig
 from nat.plugins.langchain.agent.tool_calling_agent.register import TruncationRetryConfig
+from nat.plugins.langchain.agent.tool_calling_agent.register import tool_calling_agent_workflow
 
 
 def test_truncation_retry_config_rejects_both_strategies():
@@ -82,6 +86,31 @@ async def test_state_schema():
 @pytest.fixture(name='mock_config_tool_calling_agent', scope="module")
 def mock_config():
     return ToolCallAgentWorkflowConfig(tool_names=['test'], llm_name='test', verbose=True)
+
+
+@pytest.fixture(name="tool_calling_function_info_factory")
+def fixture_tool_calling_function_info_factory(mock_llm, mock_tool):
+    """Build a tool-calling FunctionInfo with a mocked LangGraph graph."""
+
+    async def _make(*, ainvoke_result=None, astream=None, config=None):
+        from unittest.mock import MagicMock
+
+        if config is None:
+            config = ToolCallAgentWorkflowConfig(tool_names=['test'], llm_name='test')
+
+        mock_builder = AsyncMock()
+        mock_builder.get_llm = AsyncMock(return_value=mock_llm)
+        mock_builder.get_tools = AsyncMock(return_value=[mock_tool('Tool A')])
+
+        mock_graph = MagicMock()
+        mock_graph.ainvoke = AsyncMock(return_value=ainvoke_result or {"messages": []})
+        mock_graph.astream = astream
+
+        with patch.object(ToolCallAgentGraph, 'build_graph', new=AsyncMock(return_value=mock_graph)):
+            async with tool_calling_agent_workflow(config, mock_builder) as function_info:
+                return function_info
+
+    return _make
 
 
 def test_tool_calling_config_prompt(mock_config_tool_calling_agent):
@@ -427,6 +456,32 @@ async def test_stream_fn_no_duplicate_content(mock_tool_graph):
     assert prior_reply in full_response, ("AIMessage state update with prior reply should appear in unfiltered stream")
     assert prior_reply not in chunk_response, (
         f"AIMessageChunk-only stream must not contain prior assistant reply: {chunk_response!r}")
+
+
+async def test_response_fn_extracts_list_style_message_content(tool_calling_function_info_factory):
+    """Single-shot tool-calling responses should return text from provider content blocks."""
+    function_info = await tool_calling_function_info_factory(
+        ainvoke_result={"messages": [AIMessage(content=[{
+            "type": "text", "text": "The current time is noon."
+        }])]})
+
+    response = await function_info.single_fn(ChatRequestOrMessage(input_message="What time is it?"))
+
+    assert response == "The current time is noon."
+
+
+async def test_stream_fn_extracts_list_style_message_content(tool_calling_function_info_factory):
+    """Streaming tool-calling responses should emit text from provider content blocks."""
+
+    async def mock_astream(state, config=None, stream_mode=None):
+        yield (AIMessageChunk(content=[{"type": "text", "text": "The answer is 42."}]), {"langgraph_node": "agent"})
+
+    function_info = await tool_calling_function_info_factory(astream=mock_astream)
+
+    chunks = [chunk async for chunk in function_info.stream_fn(ChatRequest.from_string("Answer?"))]
+    combined = "".join(c.choices[0].delta.content for c in chunks if c.choices and c.choices[0].delta.content)
+
+    assert combined == "The answer is 42."
 
 
 def test_tool_call_chunk_serialization():
